@@ -1,0 +1,56 @@
+apiVersion: templates.gatekeeper.sh/v1beta1
+kind: ConstraintTemplate
+metadata:
+  name: k8sazurev1approvalsverification
+  annotations:
+    metadata.gatekeeper.sh/title: "approvals verification"
+    metadata.gatekeeper.sh/version: 1.0.0
+    metadata.gatekeeper.sh/requires-external-data-source: approvals-provider
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sAzureV1ApprovalsVerification
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package k8sazurev1approvalsverification
+
+        # Only validate networkcloud.azure.com resources
+        is_target {
+            input.review.kind.group == "networkcloud.azure.com"
+        }
+
+        # Get data from approvals external data source
+        remote_data := response{
+            is_target
+            request_json_string := json.marshal(input.review)
+            response := external_data({"provider": "approvals-provider", "keys": [request_json_string]})
+        }
+
+        # Base Gatekeeper violation
+        violation[{"msg": msg}] {
+            is_target
+            general_violation[{"result": msg}]
+        }
+
+        # Check if there are any errors calling ed provider
+        general_violation[{"result": result}] {
+            remote_data.system_error != ""
+            result := sprintf("System error calling external data provider: %s", [remote_data.system_error])
+        }
+
+        # Check if there are errors during validation
+        general_violation[{"result": result}] {
+            remote_data.system_error == ""
+            count(remote_data.errors) > 0
+            result := sprintf("Error validating one or more images: %s", [remote_data.errors])
+        }
+
+        general_violation[{"result": result}] {
+            remote_data.system_error == ""
+            subject_validation := remote_data.responses[_]
+            verifierReport := subject_validation[1].verifierReports[_]
+            not verifierReport.isSuccess
+            result := sprintf("Change safety verification failed; Subject: %s; Error: %s", [subject_validation[0], verifierReport.message])
+        }
