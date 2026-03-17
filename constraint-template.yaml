@@ -1,31 +1,31 @@
 apiVersion: templates.gatekeeper.sh/v1beta1
 kind: ConstraintTemplate
 metadata:
-  name: k8sazurev1approvalsverification
+  name: k8sazurev1tsgverification
   annotations:
-    metadata.gatekeeper.sh/title: "approvals verification"
+    metadata.gatekeeper.sh/title: "TSG verification"
     metadata.gatekeeper.sh/version: 1.0.0
-    metadata.gatekeeper.sh/requires-external-data-source: approvals-provider
+    metadata.gatekeeper.sh/requires-external-data-source: tsg-provider
 spec:
   crd:
     spec:
       names:
-        kind: K8sAzureV1ApprovalsVerification
+        kind: K8sAzureV1TSGVerification
   targets:
     - target: admission.k8s.gatekeeper.sh
       rego: |
-        package k8sazurev1approvalsverification
+        package k8sazurev1tsgverification
 
-        # Only validate networkcloud.azure.com resources
+        # Only validate platform.afo-nc.microsoft.com resources
         is_target {
-            input.review.kind.group == "networkcloud.azure.com"
+            input.review.kind.group == "platform.afo-nc.microsoft.com"
         }
 
-        # Get data from approvals external data source
+        # Get data from TSG external data source
         remote_data := response{
             is_target
             request_json_string := json.marshal(input.review)
-            response := external_data({"provider": "approvals-provider", "keys": [request_json_string]})
+            response := external_data({"provider": "tsg-provider", "keys": [request_json_string]})
         }
 
         # Base Gatekeeper violation
@@ -44,13 +44,5 @@ spec:
         general_violation[{"result": result}] {
             remote_data.system_error == ""
             count(remote_data.errors) > 0
-            result := sprintf("Error validating one or more images: %s", [remote_data.errors])
-        }
-
-        general_violation[{"result": result}] {
-            remote_data.system_error == ""
-            subject_validation := remote_data.responses[_]
-            verifierReport := subject_validation[1].verifierReports[_]
-            not verifierReport.isSuccess
-            result := sprintf("Change safety verification failed; Subject: %s; Error: %s", [subject_validation[0], verifierReport.message])
+            result := sprintf("Error validating approved CR content: %s", [remote_data.errors])
         }
